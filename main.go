@@ -3,19 +3,32 @@ package main
 import (
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
 )
 
+var portAddr string = ":42069"
+
 func main() {
-	f, err := os.Open("./messages.txt")
+	l, err := net.Listen("tcp", portAddr)
 	if err != nil {
-		fmt.Println("Cannot read messages.txt file on root: ", err.Error())
+		fmt.Println("Cannot listen to port ", portAddr, err.Error())
 		os.Exit(1)
 	}
 
-	for line := range getLinesChannel(f) {
-		fmt.Printf("read: %s\n", line)
+	defer l.Close()
+	println("Connection has been established on port ", portAddr)
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			fmt.Println("Cannot accept connection: ", err.Error())
+			os.Exit(1)
+		}
+
+		for line := range getLinesChannel(conn) {
+			fmt.Println(line)
+		}
 	}
 }
 
