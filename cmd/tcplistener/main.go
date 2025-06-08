@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -39,26 +40,32 @@ func getLinesChannel(f io.ReadCloser) <-chan string {
 	ch := make(chan string)
 	go func() {
 		defer f.Close()
-		readBuffer := make([]byte, 8)
-		fileStr := ""
+		defer close(ch)
+		currentLineContents := ""
 		for {
-			n, err := f.Read(readBuffer)
-			if err == io.EOF {
-				fileStr = strings.TrimSuffix(fileStr, "\n")
-				for part := range strings.SplitSeq(fileStr, "\n") {
-					if part != "" {
-						ch <- part
-					}
-				}
-				close(ch)
-				return
-			}
+			b := make([]byte, 8, 8)
+			n, err := f.Read(b)
 			if err != nil {
-				fmt.Println("cannot read streaming file: ", err.Error())
-				close(ch)
+				if currentLineContents != "" {
+					ch <- currentLineContents
+				}
+
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				fmt.Printf("error: %s\n", err.Error())
 				return
 			}
-			fileStr += string(readBuffer[:n])
+
+			str := string(b[:n])
+			parts := strings.Split(str, "\n")
+
+			for i := 0; i < len(parts)-1; i++ {
+				ch <- fmt.Sprintf("%s%s", currentLineContents, parts[i])
+				currentLineContents = ""
+			}
+
+			currentLineContents += parts[len(parts)-1]
 		}
 	}()
 	return ch
