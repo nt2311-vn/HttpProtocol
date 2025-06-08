@@ -9,6 +9,18 @@ import (
 	"unicode"
 )
 
+type ParserState int
+
+const (
+	Initialized ParserState = iota
+	Done
+)
+
+const (
+	crlf       = "\r\n"
+	bufferSize = 8
+)
+
 type RequestLine struct {
 	HttpVersion   string
 	RequestTarget string
@@ -17,22 +29,68 @@ type RequestLine struct {
 
 type Request struct {
 	RequestLine RequestLine
+	State       ParserState
 }
 
-const crlf = "\r\n"
-
 func RequestFromReader(reader io.Reader) (*Request, error) {
-	rawBytes, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, fmt.Errorf("cannot read request line %v", err)
+	buf := make([]byte, bufferSize)
+	readToIndex := 0
+	req := &Request{
+		State: Initialized,
 	}
 
-	requestLine, err := parseRequestLine(rawBytes)
-	if err != nil {
-		return nil, err
+	for req.State != Done {
+		if readToIndex >= len(buf) {
+			newBuf := make([]byte, len(buf)*2)
+			copy(newBuf, buf)
+			buf = newBuf
+		}
+
+		bytesRead, err := reader.Read(buf[readToIndex:])
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				req.State = Done
+				break
+			}
+			return nil, err
+		}
+
+		readToIndex += bytesRead
+
+		bytesParsed, err := req.parse(buf[:readToIndex])
+		if err != nil {
+			return nil, err
+		}
+
+		copy(buf, buf[bytesParsed:])
+		readToIndex -= bytesParsed
 	}
 
-	return &Request{RequestLine: *requestLine}, nil
+	return req, nil
+}
+
+func (r *Request) parse(data []byte) (int, error) {
+	switch r.State {
+	case Initialized:
+		requestLine, n, err := parseRequestLine(data)
+		if err != nil {
+			return 0, err
+		}
+
+		if n == 0 {
+			return 0, nil
+		}
+
+		r.RequestLine = *requestLine
+		r.State = Done
+		return n, nil
+
+	case Done:
+		return 0, fmt.Errorf("error: trying to read data in done state")
+
+	default:
+		return 0, fmt.Errorf("unknown state")
+	}
 }
 
 func requestLineFromString(str string) (*RequestLine, error) {
@@ -66,17 +124,17 @@ func requestLineFromString(str string) (*RequestLine, error) {
 	}, nil
 }
 
-func parseRequestLine(data []byte) (*RequestLine, error) {
+func parseRequestLine(data []byte) (*RequestLine, int, error) {
 	idx := bytes.Index(data, []byte(crlf))
 	if idx == -1 {
-		return nil, errors.New("cannot get request line from request")
+		return nil, 0, nil
 	}
 
 	requestLineText := string(data[:idx])
 	requestLine, err := requestLineFromString(requestLineText)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return requestLine, nil
+	return requestLine, idx + 2, nil
 }
