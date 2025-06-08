@@ -3,7 +3,9 @@ package headers
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -13,14 +15,32 @@ const (
 
 type Headers map[string]string
 
+var specialChars = []byte{
+	'!',
+	'#',
+	'$',
+	'%',
+	'&',
+	'\'',
+	'*',
+	'+',
+	'-',
+	'.',
+	'^',
+	'_',
+	'`',
+	'|',
+	'~',
+}
+
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
-	if bytes.HasPrefix(data, []byte(crlf)) {
-		return len(crlf), true, nil
-	}
 	idx := bytes.Index(data, []byte(crlf))
 
 	if idx == -1 {
 		return 0, false, nil
+	}
+	if idx == 0 {
+		return 2, true, nil
 	}
 
 	headerLine := string(data[:idx])
@@ -40,10 +60,29 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	key := strings.TrimSpace(rawKey)
 	value := strings.TrimSpace(parts[1])
 
+	if !validToken([]byte(key)) {
+		return 0, false, fmt.Errorf("invalid token header found: %s", key)
+	}
+	h.Set(key, value)
+	return idx + 2, false, nil
+}
+
+func (h Headers) Set(key, value string) {
+	key = strings.ToLower(key)
 	h[key] = value
-	return idx + len(crlf), false, nil
 }
 
 func NewHeaders() Headers {
 	return make(map[string]string)
+}
+
+func validToken(token []byte) bool {
+	for _, char := range token {
+		if slices.Contains(specialChars, char) || unicode.IsDigit(rune(char)) ||
+			unicode.IsLetter(rune(char)) {
+			return true
+		}
+	}
+
+	return false
 }
